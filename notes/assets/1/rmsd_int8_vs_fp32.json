@@ -1,0 +1,26 @@
+{
+  "prot040": {
+    "atoms": 320,
+    "rmsd_A": 0.217
+  },
+  "prot080": {
+    "atoms": 623,
+    "rmsd_A": 0.508
+  },
+  "prot115": {
+    "atoms": 889,
+    "rmsd_A": 0.92
+  },
+  "prot200": {
+    "atoms": 1531,
+    "rmsd_A": 0.932
+  },
+  "prot300": {
+    "atoms": 2295,
+    "rmsd_A": 1.815
+  },
+  "prot384": {
+    "atoms": 2961,
+    "rmsd_A": 0.989
+  }
+}

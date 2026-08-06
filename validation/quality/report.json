@@ -1,0 +1,48 @@
+{
+  "artifact": "affine-int8-group-64",
+  "boundary_pearson_r": {
+    "cond_atom_dec_bias": 0.99987,
+    "cond_atom_enc_bias": 0.99987,
+    "cond_token_bias": 0.99997,
+    "score_r_update": 0.99987,
+    "trunk_s": 0.99997,
+    "trunk_z": 0.99995
+  },
+  "conclusion": [
+    "The network port is faithful: all module boundaries match fp32 at r>=0.9997.",
+    "int8 vs fp32 end-to-end structural agreement is step-count dependent. On the hardest target (no MSA), 20 steps gives 3.19 A / lDDT 0.685 (fails gate) but 50 steps gives 0.64 A / lDDT 0.977 (passes) -- few-step Euler corrections are large so per-step int8 error has high leverage; finer integration removes it.",
+    "int8 (group-64, 8-bit) is viable end-to-end at production step counts; fp16 is not required for structural fidelity."
+  ],
+  "matched_noise_runs": [
+    {
+      "aligned_all_atom_rmsd": 3.194,
+      "conditioning": "no MSA (under-determined)",
+      "diffusion_steps": 20,
+      "gate_pass": false,
+      "lddt_agreement": 0.685,
+      "n_resolved_atoms": 899,
+      "target": "prot_no_msa"
+    },
+    {
+      "aligned_all_atom_rmsd": 0.641,
+      "conditioning": "no MSA (under-determined)",
+      "diffusion_steps": 50,
+      "gate_pass": true,
+      "lddt_agreement": 0.977,
+      "n_resolved_atoms": 899,
+      "target": "prot_no_msa"
+    }
+  ],
+  "method": "int8-MLX vs fp32-PyTorch. Module-boundary Pearson r vs make-fixtures; end-to-end all-atom RMSD/lDDT over resolved atoms from reverse diffusion driven by identical injected noise + identity augmentation on both backends (Kabsch-aligned).",
+  "network_port_validated": true,
+  "not_run": {
+    "examples/ligand.yaml": "protein-ligand path not yet boundary-validated (846 tokens; same memory-scaling limit).",
+    "prot_msa_monomer (384 tok, MSA depth 249)": "end-to-end sample OOM'd on Mac: a single ~28 GB Metal buffer exceeds MLX's 22.6 GB max at this size. Large-protein support needs memory optimization / chunking (separate from the iOS small-protein target). Boundary parity is size-independent and already validated."
+  },
+  "source_commit": "cb04aeccdd480fd4db707f0bbafde538397fa2ac",
+  "status": "int8 validated end-to-end at adequate step counts",
+  "thresholds": {
+    "maximum_aligned_all_atom_rmsd": 2.0,
+    "minimum_lddt_agreement": 0.9
+  }
+}

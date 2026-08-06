@@ -1,0 +1,11 @@
+{
+  "atoms" : 899,
+  "device" : "iPhone16,1",
+  "elapsed_seconds" : 12.976284082999999,
+  "mlx_peak_bytes" : 1153261815,
+  "os_version" : "Version 26.5.2 (Build 23F84)",
+  "phys_footprint_after_load_bytes" : 43844552,
+  "phys_footprint_after_predict_bytes" : 677856680,
+  "status" : "ok",
+  "tokens" : 117
+}

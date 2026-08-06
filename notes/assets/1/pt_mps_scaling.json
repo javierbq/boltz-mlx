@@ -1,0 +1,38 @@
+[
+  {
+    "name": "prot040",
+    "device": "mps",
+    "status": "ok",
+    "elapsed_seconds": 6.29
+  },
+  {
+    "name": "prot080",
+    "device": "mps",
+    "status": "ok",
+    "elapsed_seconds": 5.328
+  },
+  {
+    "name": "prot115",
+    "device": "mps",
+    "status": "ok",
+    "elapsed_seconds": 4.761
+  },
+  {
+    "name": "prot200",
+    "device": "mps",
+    "status": "ok",
+    "elapsed_seconds": 10.853
+  },
+  {
+    "name": "prot300",
+    "device": "mps",
+    "status": "ok",
+    "elapsed_seconds": 22.766
+  },
+  {
+    "name": "prot384",
+    "device": "mps",
+    "status": "ok",
+    "elapsed_seconds": 32.784
+  }
+]

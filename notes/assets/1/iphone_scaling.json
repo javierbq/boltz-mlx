@@ -1,0 +1,33 @@
+{
+  "device" : "iPhone16,1",
+  "os_version" : "Version 26.5.2 (Build 23F84)",
+  "runs" : [
+    {
+      "atoms" : 320,
+      "elapsed_seconds" : 3.2203109579999998,
+      "mlx_peak_bytes" : 611903376,
+      "name" : "prot040",
+      "phys_footprint_bytes" : 634193272,
+      "status" : "ok",
+      "tokens" : 40
+    },
+    {
+      "atoms" : 623,
+      "elapsed_seconds" : 4.7360082500000003,
+      "mlx_peak_bytes" : 959252944,
+      "name" : "prot080",
+      "phys_footprint_bytes" : 702809536,
+      "status" : "ok",
+      "tokens" : 80
+    },
+    {
+      "atoms" : 889,
+      "elapsed_seconds" : 9.4163227079999992,
+      "mlx_peak_bytes" : 1428588420,
+      "name" : "prot115",
+      "phys_footprint_bytes" : 1274136360,
+      "status" : "ok",
+      "tokens" : 115
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "last_entry": 1,
+  "current_section": 1,
+  "created": "2026-07-22",
+  "sections": [
+    {
+      "file": "notes_section_01.md",
+      "entries": [1, 1],
+      "size_mb": 0.1,
+      "description": "Boltz-2 int8 MLX Swift iOS port — speed & memory size-scaling benchmarks (Mac + iPhone 15 Pro) and the AtomEncoder OOM fix"
+    }
+  ]
+}

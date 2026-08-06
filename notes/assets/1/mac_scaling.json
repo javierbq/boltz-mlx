@@ -1,0 +1,44 @@
+[
+  {
+    "atoms" : 320,
+    "elapsed_seconds" : 1.975814,
+    "mlx_peak_bytes" : 597694356,
+    "name" : "prot040",
+    "tokens" : 40
+  },
+  {
+    "atoms" : 623,
+    "elapsed_seconds" : 2.4081222919999998,
+    "mlx_peak_bytes" : 1302016092,
+    "name" : "prot080",
+    "tokens" : 80
+  },
+  {
+    "atoms" : 889,
+    "elapsed_seconds" : 2.7233097499999999,
+    "mlx_peak_bytes" : 2166508867,
+    "name" : "prot115",
+    "tokens" : 115
+  },
+  {
+    "atoms" : 1531,
+    "elapsed_seconds" : 6.9993962090000004,
+    "mlx_peak_bytes" : 3472214200,
+    "name" : "prot200",
+    "tokens" : 200
+  },
+  {
+    "atoms" : 2295,
+    "elapsed_seconds" : 16.385648416999999,
+    "mlx_peak_bytes" : 4627457892,
+    "name" : "prot300",
+    "tokens" : 300
+  },
+  {
+    "atoms" : 2961,
+    "elapsed_seconds" : 27.206467167,
+    "mlx_peak_bytes" : 6843918236,
+    "name" : "prot384",
+    "tokens" : 384
+  }
+]
