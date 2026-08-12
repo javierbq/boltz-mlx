@@ -208,8 +208,10 @@ final class MSAEndToEndTests: XCTestCase {
                 let base = URL(fileURLWithPath: directory)
                 try writeAlphaCarbons(scored.structure, chains: chains,
                                       to: base.appending(path: "\(stem).csv"))
-                try writePDB(scored.structure, structure: structure,
-                             to: base.appending(path: "\(stem).pdb"))
+                try StructureWriter.pdb(structure: scored.structure,
+                                        canonical: structure)
+                    .write(to: base.appending(path: "\(stem).pdb"),
+                           atomically: true, encoding: .utf8)
             }
         }
 
@@ -227,50 +229,6 @@ final class MSAEndToEndTests: XCTestCase {
         XCTAssertLessThan(none.minIPSAE, 0.1,
                           "the single-sequence control scored as a binder; the gate is not "
                           + "discriminating and the comparison above proves nothing")
-    }
-
-    /// Full-atom PDB, so the predictions can be opened alongside the crystal in a viewer. Residue
-    /// identity comes from the CanonicalStructure (not re-derived), and atom order is the featurizer's
-    /// own template order, which is the order `coordinates` is in.
-    private func writePDB(
-        _ predicted: BoltzStructure,
-        structure: CanonicalStructure,
-        to url: URL
-    ) throws {
-        // Heavy atoms of the canonical 20 only ever use these elements.
-        let element = [6: "C", 7: "N", 8: "O", 16: "S"]
-        var lines: [String] = []
-        var atomSerial = 1
-        var atom = 0
-        // Number 1-based within each chain, matching the CA csv. `hostResSeq` is a 0-based index for
-        // a sequence-derived structure, and writing that verbatim offsets every model by one residue
-        // against a crystal, which silently defeats residue-wise comparison in a viewer.
-        var residueNumber: [String: Int] = [:]
-        for residue in structure.orderedResidues {
-            guard let template = AAResidueTemplates.template(threeLetter: residue.threeLetter) else {
-                continue
-            }
-            let number = (residueNumber[residue.hostChain] ?? 0) + 1
-            residueNumber[residue.hostChain] = number
-            for spec in template.atoms {
-                defer { atom += 1 }
-                guard atom < predicted.coordinates.count else { continue }
-                let p = predicted.coordinates[atom]
-                // PDB atom names are column-sensitive: one-character elements start in column 14,
-                // which is what the leading space produces for names shorter than four characters.
-                let name = spec.name.count >= 4 ? spec.name
-                                                : " \(spec.name)".padding(toLength: 4,
-                                                                          withPad: " ", startingAt: 0)
-                let symbol = element[spec.atomicNumber] ?? "C"
-                lines.append(String(
-                    format: "ATOM  %5d %@ %@ %@%4d    %8.3f%8.3f%8.3f  1.00  0.00          %2@",
-                    atomSerial, name, residue.threeLetter, residue.hostChain, number,
-                    p.x, p.y, p.z, symbol))
-                atomSerial += 1
-            }
-        }
-        lines.append("END")
-        try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
     }
 
     /// CA coordinates labelled by chain and residue ordinal, so a comparison to the crystal can pair
