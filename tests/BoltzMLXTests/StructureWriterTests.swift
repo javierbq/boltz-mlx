@@ -118,8 +118,40 @@ final class StructureWriterTests: XCTestCase {
     }
   }
 
-  /// There is no pLDDT: ConfidenceModule is explicitly PAE-only. The B-factor column
-  /// must therefore be a documented constant, not a fabricated confidence.
+  private func bFactor(_ line: String) -> String {
+    let s = line.index(line.startIndex, offsetBy: 60)
+    let e = line.index(line.startIndex, offsetBy: 66)
+    return String(line[s..<e]).trimmingCharacters(in: .whitespaces)
+  }
+
+  /// pLDDT is per TOKEN, so every atom of a residue carries that residue's value.
+  func testPLDDTIsWrittenIntoTheBFactorPerResidue() throws {
+    let (structure, canonical) = try fixture()          // ALA (5 atoms) then GLY (4)
+    let text = try StructureWriter.pdb(structure: structure, canonical: canonical,
+                                      plddt: [88.5, 42.25])
+    let lines = atomLines(text)
+    XCTAssertEqual(lines.count, 9)
+    for line in lines.prefix(5) { XCTAssertEqual(bFactor(line), "88.50") }
+    for line in lines.suffix(4) { XCTAssertEqual(bFactor(line), "42.25") }
+  }
+
+  /// A count mismatch means the scores and the structure are not the same prediction.
+  /// Writing anyway would attach one residue's confidence to another.
+  func testWrongPLDDTCountThrowsRatherThanMisattributing() throws {
+    let (structure, canonical) = try fixture()
+    XCTAssertThrowsError(try StructureWriter.pdb(structure: structure, canonical: canonical,
+                                                plddt: [50.0]))
+  }
+
+  func testPLDDTDoesNotDisturbTheColumnLayout() throws {
+    let (structure, canonical) = try fixture()
+    let text = try StructureWriter.pdb(structure: structure, canonical: canonical,
+                                      plddt: [100.0, 0.0])
+    for line in atomLines(text) { XCTAssertGreaterThanOrEqual(line.count, 78) }
+  }
+
+  /// Omitting it must stay a documented constant, NOT a fabricated confidence -- a caller
+  /// on the plain `predict` path has no pLDDT, and inventing one would be worse than zero.
   func testBFactorIsZero() throws {
     let (structure, canonical) = try fixture()
     let text = try StructureWriter.pdb(structure: structure, canonical: canonical)

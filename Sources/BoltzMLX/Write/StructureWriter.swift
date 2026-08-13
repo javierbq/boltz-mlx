@@ -20,15 +20,20 @@ import Foundation
 /// single model, because `diffusion_samples` is not plumbed and only diffusion sample 0
 /// escapes `BoltzPredictor`.
 ///
-/// The B-factor column is a constant `0.00`. It is tempting to write confidence there
-/// — that is what a viewer would colour by — but **there is no pLDDT to write**:
-/// `ConfidenceModule` is explicitly PAE-only. A per-token PAE row-reduction is a
-/// different quantity and must never be labelled as pLDDT.
+/// The B-factor column carries **pLDDT (0...100) when it is supplied**, which is what a
+/// viewer colours by, and `0.00` when it is not. Pass the real thing or nothing: a
+/// per-token PAE row-reduction is a DIFFERENT quantity and must never be written here as
+/// though it were pLDDT. `ConfidenceModule` computes pLDDT only on the scored path, so a
+/// caller using plain `predict` has none and correctly gets zeros.
+///
+/// pLDDT is per TOKEN, i.e. per residue for a protein chain, so every atom of a residue
+/// gets that residue's value — the same convention AlphaFold and Boltz write.
 public enum StructureWriter {
 
   public enum WriteError: Error, LocalizedError, Equatable {
     case atomCountMismatch(expected: Int, found: Int)
     case missingTemplate(String)
+    case plddtCountMismatch(expected: Int, found: Int)
 
     public var errorDescription: String? {
       switch self {
@@ -36,6 +41,8 @@ public enum StructureWriter {
         return "structure has \(found) coordinates, expected \(expected)"
       case let .missingTemplate(code):
         return "no residue template for \(code)"
+      case let .plddtCountMismatch(expected, found):
+        return "got \(found) pLDDT values, expected \(expected) (one per residue)"
       }
     }
   }
@@ -46,7 +53,16 @@ public enum StructureWriter {
   ///   match the template walk — which means the two arguments do not describe the
   ///   same prediction, and is always a caller bug rather than something to paper over.
   public static func pdb(structure: BoltzStructure,
-                        canonical: CanonicalStructure) throws -> String {
+                        canonical: CanonicalStructure,
+                        plddt: [Double]? = nil) throws -> String {
+    // One value per residue, or none. A mismatch means the scores and the structure do
+    // not describe the same prediction, which is a caller bug: writing them anyway would
+    // silently attach one residue's confidence to another.
+    if let plddt, plddt.count != canonical.orderedResidues.count {
+      throw WriteError.plddtCountMismatch(expected: canonical.orderedResidues.count,
+                                          found: plddt.count)
+    }
+
     var expected = 0
     for residue in canonical.orderedResidues {
       guard let template = AAResidueTemplates.template(threeLetter: residue.threeLetter)
@@ -67,8 +83,9 @@ public enum StructureWriter {
     // against a crystal, which silently defeats residue-wise comparison.
     var resSeq = 0
 
-    for residue in canonical.orderedResidues {
+    for (residueIndex, residue) in canonical.orderedResidues.enumerated() {
       let template = AAResidueTemplates.template(threeLetter: residue.threeLetter)!
+      let confidence = plddt?[residueIndex] ?? 0.0
       if let previous = previousChain, previous != residue.hostChain {
         text += "TER\n"
         resSeq = 0
@@ -86,7 +103,8 @@ public enum StructureWriter {
                        chain: chainCharacter(residue.hostChain),
                        resSeq: resSeq,
                        insCode: residue.hostInsCode.map(String.init) ?? " ",
-                       x: position.x, y: position.y, z: position.z)
+                       x: position.x, y: position.y, z: position.z,
+                       bFactor: confidence)
         serial += 1
       }
     }
@@ -103,7 +121,8 @@ public enum StructureWriter {
   /// kind that occurs across the canonical-20 heavy-atom templates.
   private static func record(serial: Int, name: String, element: String,
                              residue: String, chain: Character, resSeq: Int,
-                             insCode: String, x: Float, y: Float, z: Float) -> String {
+                             insCode: String, x: Float, y: Float, z: Float,
+                             bFactor: Double) -> String {
     let field = String((" " + name + "   ").prefix(4))
     // Right-justify the element by hand. `%2@` does NOT pad: Foundation's
     // String(format:) honours a width for %s but not for %@, so `%2@` with "N"
@@ -113,7 +132,7 @@ public enum StructureWriter {
     return String(
       format: "ATOM  %5d %@ %@ %@%4d%@   %8.3f%8.3f%8.3f%6.2f%6.2f          %@\n",
       serial, field, residue, String(chain), resSeq, insCode,
-      x, y, z, 1.00, 0.00, elementField)
+      x, y, z, 1.00, bFactor, elementField)
   }
 
   /// Only C, N, O and S occur across the canonical-20 heavy-atom templates. Anything

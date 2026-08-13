@@ -4,7 +4,7 @@
 // gate a design loop accepts or rejects candidates on. Without this the whole pipeline can fold but
 // cannot score.
 //
-// SCOPE: PAE ONLY. pLDDT, PDE, pTM/ipTM and resolved-ness are deliberately not computed. That is not
+// SCOPE: PAE + pLDDT. PDE, pTM/ipTM and resolved-ness are deliberately not computed. That is not
 // laziness — `min_ipSAE` needs nothing but PAE and the per-chain token ranges, and PAE is the ONLY
 // head whose inputs are already available: `pred_distogram_logits` (needed by PDE and the aggregated
 // metrics) is consumed by the other heads, not by PAE. So this is the smallest change that yields a
@@ -21,6 +21,9 @@
 //                                  asym_id, and a port written from the obvious reading of
 //                                  confidencev2.py fails at weight lookup
 //   use_s_diffusion    = false  -> no diffusion-state input, which keeps this tractable
+//   num_plddt_bins     = 50     -> pLDDT is a head over the pairformer's SINGLE output `s`, not
+//                                  over `z`. `s` was already computed and discarded here, so the
+//                                  head costs one linear layer on top of work already done.
 //
 // A NOTE ON THE RESIDUAL CONNECTIONS. Upstream comments "AF3 has residual connections, we remove
 // them" and assigns the pairformer outputs directly (`s = s_t; z = z_t`). Adding the residual — the
@@ -51,6 +54,8 @@ public struct ConfidenceModule {
     let pairformer: Pairformer
     // heads
     let paeIntraLogits: AffineLinear
+    /// Head over the per-token representation. pLDDT, unlike PAE, is per token not per pair.
+    let plddtLogits: AffineLinear
     let paeInterLogits: AffineLinear
     let paeBinCount: Int
     let maximumPAE: Double
@@ -64,6 +69,12 @@ public struct ConfidenceModule {
         public let paeLogits: [Float]
         public let tokenCount: Int
         public let binCount: Int
+        /// [tokens] pLDDT in 0...100, the per-residue confidence a viewer colours by.
+        public let plddt: [Double]
+        /// Raw [tokens, bins] logits, exposed for the same reason as `paeLogits`: after the
+        /// expectation, a wrong head and wrong bin centres are indistinguishable.
+        public let plddtLogits: [Float]
+        public let plddtBinCount: Int
     }
 
     /// - Parameters:
@@ -116,7 +127,6 @@ public struct ConfidenceModule {
 
         // No residual: upstream deliberately drops AF3's residual connections here.
         let (sOut, zOut) = try pairformer(sequence: s, pair: z, mask: mask, pairMask: pairMask)
-        _ = sOut
         z = zOut
 
         // Two heads, selected per pair by whether the tokens share a chain.
@@ -132,7 +142,16 @@ public struct ConfidenceModule {
         let pae = InterfaceScoring.expectedError(
             logits: flat.map(Double.init), tokenCount: n,
             binCount: paeBinCount, maximumError: maximumPAE)
-        return Output(pae: pae, paeLogits: flat, tokenCount: n, binCount: paeBinCount)
+        // pLDDT: one head over the single representation the pairformer already produced.
+        let plddtRaw = plddtLogits(sOut)
+        MLX.eval(plddtRaw)
+        let plddtBins = plddtRaw.dim(-1)
+        let plddtFlat = plddtRaw.reshaped([n * plddtBins]).asType(.float32).asArray(Float.self)
+        let plddt = InterfaceScoring.expectedPLDDT(
+            logits: plddtFlat.map(Double.init), tokenCount: n, binCount: plddtBins)
+
+        return Output(pae: pae, paeLogits: flat, tokenCount: n, binCount: paeBinCount,
+                      plddt: plddt, plddtLogits: plddtFlat, plddtBinCount: plddtBins)
     }
 }
 
@@ -189,6 +208,7 @@ extension BoltzWeightStore {
                 prefix: "\(p).pairformer_stack"
             ),
             paeIntraLogits: try linear("\(p).confidence_heads.to_pae_intra_logits"),
+            plddtLogits: try linear("\(p).confidence_heads.to_plddt_logits"),
             paeInterLogits: try linear("\(p).confidence_heads.to_pae_inter_logits"),
             paeBinCount: args.numPAEBins,
             maximumPAE: 32.0

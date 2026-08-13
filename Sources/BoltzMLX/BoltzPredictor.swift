@@ -6,6 +6,8 @@ public struct ScoredStructure: @unchecked Sendable {
   public let structure: BoltzStructure
   /// Row-major [tokenCount * tokenCount] expected aligned error, Angstroms.
   public let pae: [Double]
+  /// [tokens] pLDDT in 0...100. Per TOKEN, which for a protein chain is per residue.
+  public let plddt: [Double]
   public let tokenCount: Int
   public let chainTokenRanges: [(chain: String, range: Range<Int>)]
 
@@ -160,7 +162,8 @@ public actor BoltzPredictor {
       coordinates: coordinates,
       atomMask: requireFeature("atom_pad_mask", from: features))
     return ScoredStructure(
-      structure: structure, pae: scored.pae, tokenCount: scored.tokenCount,
+      structure: structure, pae: scored.pae, plddt: scored.plddt,
+      tokenCount: scored.tokenCount,
       chainTokenRanges: featurized.layout.chainTokenRanges)
   }
 

@@ -151,6 +151,40 @@ public enum InterfaceScoring {
     /// error is the expectation over bin CENTRES. With the default 64 bins over 32 A that is
     /// 0.25, 0.75, ... 31.75 — the same centres the reference uses. Passing bin EDGES instead
     /// biases every value low by half a bin.
+    /// Per-token pLDDT in 0...100 from `[tokens, bins]` logits.
+    ///
+    /// Separate from ``expectedError(logits:tokenCount:binCount:maximumError:)`` because the
+    /// binning is a different quantity, not a different scale: pLDDT bins tile the LDDT
+    /// FRACTION 0...1 with centres `(i + 0.5) / bins`, and the result is scaled to a
+    /// percentage. Reusing the PAE helper with `maximumError: 1.0` would give the fraction
+    /// but hide the semantics, and the two must not drift into each other.
+    ///
+    /// Exposed as its own function so it can be checked against hand-computed values. The
+    /// reduction is where binning bugs hide: once logits are collapsed to one scalar per
+    /// token, a wrong head and wrong bin centres look identical.
+    public static func expectedPLDDT(
+        logits: [Double],
+        tokenCount n: Int,
+        binCount: Int
+    ) -> [Double] {
+        precondition(logits.count == n * binCount, "logits are not \(n)x\(binCount)")
+        let centres = (0 ..< binCount).map { (Double($0) + 0.5) / Double(binCount) }
+        var out = [Double](repeating: 0, count: n)
+        for t in 0 ..< n {
+            let base = t * binCount
+            var maxLogit = -Double.greatestFiniteMagnitude
+            for b in 0 ..< binCount { maxLogit = max(maxLogit, logits[base + b]) }
+            var sum = 0.0, weighted = 0.0
+            for b in 0 ..< binCount {
+                let e = exp(logits[base + b] - maxLogit)
+                sum += e
+                weighted += e * centres[b]
+            }
+            out[t] = sum > 0 ? 100.0 * weighted / sum : 0.0
+        }
+        return out
+    }
+
     public static func expectedError(
         logits: [Double],
         tokenCount n: Int,
