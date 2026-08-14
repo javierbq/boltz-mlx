@@ -16,11 +16,25 @@ def cli() -> None:
 @cli.command("export-model")
 @click.option("--checkpoint", type=click.Path(path_type=Path), required=True)
 @click.option("--output", type=click.Path(path_type=Path), required=True)
-def export_model_command(checkpoint: Path, output: Path) -> None:
+@click.option(
+    "--precision",
+    type=click.Choice(["int8", "float16", "bfloat16"]),
+    default="int8",
+    show_default=True,
+    help="int8 quantizes every matrix; float16/bfloat16 store them dense (~2x larger).",
+)
+def export_model_command(checkpoint: Path, output: Path, precision: str) -> None:
     """Export structure-only weights from a Boltz-2 checkpoint."""
-    from boltz_mlx_export.model_export import export_checkpoint  # noqa: PLC0415
+    from boltz_mlx_export.model_export import (  # noqa: PLC0415
+        Precision,
+        export_checkpoint,
+    )
 
-    export_checkpoint(checkpoint=checkpoint, output=output)
+    export_checkpoint(
+        checkpoint=checkpoint,
+        output=output,
+        precision=Precision(precision),
+    )
 
 
 @cli.command("export-features")

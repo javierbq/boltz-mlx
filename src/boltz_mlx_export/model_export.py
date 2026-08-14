@@ -6,11 +6,13 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 from safetensors.numpy import save_file
+from safetensors.torch import save_file as save_torch_file
 
 from boltz_mlx_export.names import select_structure_values, swift_tensor_name
 from boltz_mlx_export.quantization import (
@@ -25,6 +27,21 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from torch import Tensor
+
+
+#: Manifest dtype spellings. These must match ArtifactIO.dtypeName on the Swift side
+#: exactly: the loader compares the string per tensor and throws on any mismatch.
+_TORCH_DTYPE_NAMES = {
+    torch.bfloat16: "bfloat16",
+    torch.float16: "float16",
+    torch.float32: "float32",
+    torch.int8: "int8",
+    torch.int16: "int16",
+    torch.int32: "int32",
+    torch.int64: "int64",
+    torch.uint8: "uint8",
+    torch.bool: "bool",
+}
 
 
 @dataclass(frozen=True)
@@ -179,6 +196,30 @@ def select_structure_state_dict(state: Mapping[str, Tensor]) -> dict[str, Tensor
     return select_structure_values(state)
 
 
+class Precision(StrEnum):
+    """Weight representation for an exported model artifact.
+
+    ``INT8`` packs every eligible matrix with MLX affine int8 (group 64) and stores
+    everything else as float16. ``FLOAT16`` and ``BFLOAT16`` store every float tensor
+    dense at that width, matrices included, and emit no quantization block.
+
+    A pack is single-dtype on purpose: MLX promotes a mixed float16/bfloat16 operation
+    to float32, so a pack that mixed widths would silently change both numerics and
+    speed relative to either pure pack.
+    """
+
+    INT8 = "int8"
+    FLOAT16 = "float16"
+    BFLOAT16 = "bfloat16"
+
+    @property
+    def torch_dtype(self) -> torch.dtype:
+        """The torch dtype float tensors are stored at under this precision."""
+        return (
+            torch.bfloat16 if self is Precision.BFLOAT16 else torch.float16
+        )
+
+
 def _numpy_parameter(tensor: Tensor) -> np.ndarray:
     value = tensor.detach().cpu().contiguous()
     if value.dtype == torch.bfloat16:
@@ -189,14 +230,64 @@ def _numpy_parameter(tensor: Tensor) -> np.ndarray:
     return array
 
 
+def _dense_parameter(tensor: Tensor, dtype: torch.dtype) -> Tensor:
+    """Return one contiguous tensor, floats narrowed to the pack's dtype."""
+    value = tensor.detach().cpu().contiguous()
+    if value.dtype.is_floating_point:
+        return value.to(dtype)
+    return value
+
+
+def _export_dense(
+    selected: Mapping[str, Tensor],
+    *,
+    output: Path,
+    source_checkpoint_sha256: str,
+    precision: Precision,
+) -> ArtifactManifest:
+    """Write an unquantized artifact directory at one uniform float width.
+
+    Matrices carry no ``logical_shape``/``physical_shape``: quantization padded the
+    input width up to the group size, and dense weights need no padding, so the shape
+    is its own single source of truth.
+    """
+    dtype = precision.torch_dtype
+    tensors: dict[str, Tensor] = {}
+    specs: list[TensorSpec] = []
+    for torch_name, tensor in selected.items():
+        name = swift_tensor_name(torch_name)
+        value = _dense_parameter(tensor, dtype)
+        tensors[name] = value
+        specs.append(
+            TensorSpec(
+                name=name,
+                shape=tuple(int(dimension) for dimension in value.shape),
+                dtype=_TORCH_DTYPE_NAMES[value.dtype],
+            ),
+        )
+
+    output.mkdir(parents=True, exist_ok=True)
+    # safetensors.numpy cannot round-trip bfloat16 -- numpy has no such dtype -- so
+    # dense packs are written through the torch backend regardless of width.
+    save_torch_file(dict(sorted(tensors.items())), output / "model.safetensors")
+    manifest = ArtifactManifest.model_v1(
+        source_checkpoint_sha256=source_checkpoint_sha256,
+        tensors=tuple(sorted(specs, key=lambda spec: spec.name)),
+        quantization=None,
+    )
+    manifest.write(output / "manifest.json")
+    return manifest
+
+
 def export_state_dict(
     state: Mapping[str, Tensor],
     *,
     output: Path,
     eligible_matrix_names: AbstractSet[str],
     source_checkpoint_sha256: str,
+    precision: Precision = Precision.INT8,
 ) -> ArtifactManifest:
-    """Write a deterministic, structure-only affine-int8 artifact directory."""
+    """Write a deterministic, structure-only model artifact directory."""
     selected = select_structure_state_dict(state)
     missing = set(eligible_matrix_names).difference(selected)
     if missing:
@@ -204,6 +295,14 @@ def export_state_dict(
             f"eligible matrix names are absent from structure state: {sorted(missing)}"
         )
         raise ValueError(message)
+
+    if precision is not Precision.INT8:
+        return _export_dense(
+            selected,
+            output=output,
+            source_checkpoint_sha256=source_checkpoint_sha256,
+            precision=precision,
+        )
 
     arrays: dict[str, np.ndarray] = {}
     specs: list[TensorSpec] = []
@@ -304,7 +403,12 @@ def _eligible_matrix_names(model: torch.nn.Module) -> set[str]:
     return set(select_structure_values(dict.fromkeys(eligible)))
 
 
-def export_checkpoint(*, checkpoint: Path, output: Path) -> ArtifactManifest:
+def export_checkpoint(
+    *,
+    checkpoint: Path,
+    output: Path,
+    precision: Precision = Precision.INT8,
+) -> ArtifactManifest:
     """Load and export the pinned production Boltz-2 checkpoint."""
     if not checkpoint.is_file():
         message = f"checkpoint does not exist: {checkpoint}"
@@ -315,6 +419,7 @@ def export_checkpoint(*, checkpoint: Path, output: Path) -> ArtifactManifest:
         output=output,
         eligible_matrix_names=_eligible_matrix_names(model),
         source_checkpoint_sha256=_sha256(checkpoint),
+        precision=precision,
     )
     ModelConfiguration.from_hparams(dict(model.hparams)).write(
         output / "config.json"

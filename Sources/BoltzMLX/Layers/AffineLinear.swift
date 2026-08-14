@@ -1,13 +1,20 @@
 import MLX
 
-/// Row-wise lookup for an affine-int8 embedding matrix.
+/// How a matrix parameter is stored in the artifact it was loaded from.
+///
+/// An int8 pack quantizes each matrix affinely and pads its input width up to the
+/// group size; a dense pack stores the matrix at its own float width, unpadded. The
+/// two cannot be mixed within one artifact -- see the exporter's `Precision`.
+enum MatrixStorage {
+  case affineInt8(scales: MLXArray, quantizationBiases: MLXArray?, groupSize: Int, bits: Int)
+  case dense
+}
+
+/// Row-wise lookup for an embedding matrix, affine-int8 or dense.
 public struct AffineEmbedding {
   public let weight: MLXArray
-  public let scales: MLXArray
-  public let quantizationBiases: MLXArray?
   public let logicalOutputWidth: Int
-  public let groupSize: Int
-  public let bits: Int
+  let storage: MatrixStorage
 
   public init(
     weight: MLXArray,
@@ -18,39 +25,50 @@ public struct AffineEmbedding {
     bits: Int
   ) {
     self.weight = weight
-    self.scales = scales
-    self.quantizationBiases = quantizationBiases
     self.logicalOutputWidth = logicalOutputWidth
-    self.groupSize = groupSize
-    self.bits = bits
+    self.storage = .affineInt8(
+      scales: scales,
+      quantizationBiases: quantizationBiases,
+      groupSize: groupSize,
+      bits: bits
+    )
+  }
+
+  /// An embedding whose rows are stored at full float width.
+  public init(denseWeight: MLXArray) {
+    self.weight = denseWeight
+    self.logicalOutputWidth = denseWeight.shape[1]
+    self.storage = .dense
   }
 
   public func callAsFunction(_ indices: MLXArray) -> MLXArray {
     let flattened = indices.flattened()
-    let selectedBiases = quantizationBiases.map { $0[flattened] }
-    let rows = MLX.dequantized(
-      weight[flattened],
-      scales: scales[flattened],
-      biases: selectedBiases,
-      groupSize: groupSize,
-      bits: bits,
-      mode: .affine
-    )
+    let rows: MLXArray
+    switch storage {
+    case .affineInt8(let scales, let quantizationBiases, let groupSize, let bits):
+      rows = MLX.dequantized(
+        weight[flattened],
+        scales: scales[flattened],
+        biases: quantizationBiases.map { $0[flattened] },
+        groupSize: groupSize,
+        bits: bits,
+        mode: .affine
+      )
+    case .dense:
+      rows = weight[flattened]
+    }
     let logicalRows = rows[.ellipsis, 0..<logicalOutputWidth]
     return logicalRows.reshaped(indices.shape + [logicalOutputWidth])
   }
 }
 
-/// An MLX affine-int8 matrix multiplication with optional logical-width padding.
+/// An MLX matrix multiplication -- affine-int8 with logical-width padding, or dense.
 public final class AffineLinear {
   public let weight: MLXArray
-  public let scales: MLXArray
-  public let quantizationBiases: MLXArray?
   public let linearBias: MLXArray?
   public let logicalInputWidth: Int
   public let physicalInputWidth: Int
-  public let groupSize: Int
-  public let bits: Int
+  let storage: MatrixStorage
 
   public init(
     weight: MLXArray,
@@ -63,36 +81,54 @@ public final class AffineLinear {
     bits: Int
   ) {
     self.weight = weight
-    self.scales = scales
-    self.quantizationBiases = quantizationBiases
     self.linearBias = linearBias
     self.logicalInputWidth = logicalInputWidth
     self.physicalInputWidth = physicalInputWidth
-    self.groupSize = groupSize
-    self.bits = bits
+    self.storage = .affineInt8(
+      scales: scales,
+      quantizationBiases: quantizationBiases,
+      groupSize: groupSize,
+      bits: bits
+    )
+  }
+
+  /// A matrix stored at full float width. Dense weights need no group padding, so the
+  /// logical and physical input widths coincide.
+  public init(denseWeight: MLXArray, linearBias: MLXArray?) {
+    self.weight = denseWeight
+    self.linearBias = linearBias
+    self.logicalInputWidth = denseWeight.shape[1]
+    self.physicalInputWidth = denseWeight.shape[1]
+    self.storage = .dense
   }
 
   public func callAsFunction(_ input: MLXArray) -> MLXArray {
     precondition(input.shape.last == logicalInputWidth)
-    let padding = physicalInputWidth - logicalInputWidth
-    let paddedInput: MLXArray
-    if padding == 0 {
-      paddedInput = input
-    } else {
-      var widths = Array(repeating: IntOrPair(0), count: input.ndim)
-      widths[input.ndim - 1] = IntOrPair((0, padding))
-      paddedInput = MLX.padded(input, widths: widths)
+    var output: MLXArray
+    switch storage {
+    case .affineInt8(let scales, let quantizationBiases, let groupSize, let bits):
+      let padding = physicalInputWidth - logicalInputWidth
+      let paddedInput: MLXArray
+      if padding == 0 {
+        paddedInput = input
+      } else {
+        var widths = Array(repeating: IntOrPair(0), count: input.ndim)
+        widths[input.ndim - 1] = IntOrPair((0, padding))
+        paddedInput = MLX.padded(input, widths: widths)
+      }
+      output = MLX.quantizedMM(
+        paddedInput,
+        weight,
+        scales: scales,
+        biases: quantizationBiases,
+        transpose: true,
+        groupSize: groupSize,
+        bits: bits,
+        mode: .affine
+      )
+    case .dense:
+      output = MLX.matmul(input, weight.transposed())
     }
-    var output = MLX.quantizedMM(
-      paddedInput,
-      weight,
-      scales: scales,
-      biases: quantizationBiases,
-      transpose: true,
-      groupSize: groupSize,
-      bits: bits,
-      mode: .affine
-    )
     if let linearBias {
       output = output + linearBias
     }
@@ -114,6 +150,12 @@ public struct BoltzWeightStore {
     let quantizationBiasesName = "\(prefix).biases"
     guard let weight = artifact.arrays[weightName] else {
       throw BoltzError.missingTensor(weightName)
+    }
+    if artifact.manifest.quantization == nil {
+      return AffineLinear(
+        denseWeight: weight,
+        linearBias: artifact.arrays["\(prefix).bias"]
+      )
     }
     guard let scales = artifact.arrays[scalesName] else {
       throw BoltzError.missingTensor(scalesName)
@@ -152,6 +194,9 @@ public struct BoltzWeightStore {
     let scalesName = "\(prefix).scales"
     guard let weight = artifact.arrays[weightName] else {
       throw BoltzError.missingTensor(weightName)
+    }
+    if artifact.manifest.quantization == nil {
+      return AffineEmbedding(denseWeight: weight)
     }
     guard let scales = artifact.arrays[scalesName] else {
       throw BoltzError.missingTensor(scalesName)

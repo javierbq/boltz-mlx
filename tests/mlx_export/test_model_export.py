@@ -2,11 +2,14 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 from safetensors.numpy import load_file
+from safetensors.torch import load_file as load_torch_file
 
 from boltz_mlx_export.model_export import (
     ModelConfiguration,
+    Precision,
     _eligible_matrix_names,
     export_state_dict,
     select_structure_state_dict,
@@ -96,6 +99,60 @@ def test_export_state_dict_writes_quantized_and_plain_tensors(tmp_path: Path) ->
         "group_size": 64,
         "mode": "affine",
     }
+
+
+@pytest.mark.parametrize(
+    ("precision", "expected_dtype"),
+    [(Precision.BFLOAT16, torch.bfloat16), (Precision.FLOAT16, torch.float16)],
+)
+def test_dense_export_stores_every_matrix_unquantized(
+    tmp_path: Path,
+    precision: Precision,
+    expected_dtype: torch.dtype,
+) -> None:
+    """A dense pack carries no scales/biases and no padding, at one uniform width."""
+    state = {
+        "s_init.weight": torch.arange(128, dtype=torch.float32).reshape(2, 64),
+        "s_norm.weight": torch.ones(2),
+        "token_bonds.weight": torch.arange(2, dtype=torch.float32).reshape(2, 1),
+        "bfactor_module.weight": torch.ones(2, 64),
+    }
+
+    manifest = export_state_dict(
+        state,
+        output=tmp_path,
+        eligible_matrix_names={"s_init.weight", "token_bonds.weight"},
+        source_checkpoint_sha256="c" * 64,
+        precision=precision,
+    )
+
+    tensors = load_torch_file(tmp_path / "model.safetensors")
+    assert set(tensors) == {"s_init.weight", "s_norm.weight", "token_bonds.weight"}
+    # The int8 pack pads 1 -> 64 to reach the quantization group size; dense must not.
+    assert tensors["token_bonds.weight"].shape == (2, 1)
+    assert all(value.dtype == expected_dtype for value in tensors.values())
+    assert manifest.quantization is None
+    specs = {tensor.name: tensor for tensor in manifest.tensors}
+    assert specs["s_init.weight"].dtype == str(precision)
+    assert specs["s_init.weight"].logical_shape is None
+    assert specs["s_init.weight"].physical_shape is None
+    assert ArtifactManifest.read(tmp_path / "manifest.json") == manifest
+
+
+def test_dense_export_preserves_weight_values_within_its_width(tmp_path: Path) -> None:
+    """Dense weights are a pure narrowing of fp32 -- no scale, no zero point."""
+    weight = torch.randn(8, 64, dtype=torch.float32)
+
+    export_state_dict(
+        {"s_init.weight": weight},
+        output=tmp_path,
+        eligible_matrix_names={"s_init.weight"},
+        source_checkpoint_sha256="c" * 64,
+        precision=Precision.BFLOAT16,
+    )
+
+    stored = load_torch_file(tmp_path / "model.safetensors")["s_init.weight"]
+    assert torch.equal(stored, weight.to(torch.bfloat16))
 
 
 def test_model_configuration_round_trip_preserves_runtime_architecture(

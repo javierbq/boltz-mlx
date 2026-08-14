@@ -56,6 +56,30 @@ final class PrimitiveParityTests: XCTestCase {
     assertClose(output, [4.5, 5.5], absoluteTolerance: 0.03)
   }
 
+  func testDenseAffineLinearIsAPlainMatmulWithNoPadding() throws {
+    // The int8 path would have padded this 1-channel input up to the group size of 64;
+    // dense must consume it at its own width, and reproduce the matmul exactly.
+    let weight = array([2.0, 3.0], shape: [2, 1])
+    let layer = AffineLinear(denseWeight: weight, linearBias: array([0.5, -0.5]))
+
+    let output = layer(array([2.0], shape: [1, 1]))
+
+    XCTAssertEqual(layer.logicalInputWidth, 1)
+    XCTAssertEqual(layer.physicalInputWidth, 1)
+    assertClose(output, [4.5, 5.5], absoluteTolerance: 1e-6)
+  }
+
+  func testDenseAffineEmbeddingSelectsRowsVerbatim() throws {
+    let embedding = AffineEmbedding(
+      denseWeight: MLXArray((0..<6).map(Float.init), [2, 3])
+    )
+
+    let output = embedding(MLXArray([1, 0], [2]))
+
+    // Verbatim, not merely close: dense rows carry no quantization error at all.
+    assertClose(output, [3, 4, 5, 0, 1, 2], absoluteTolerance: 0)
+  }
+
   func testBoltzLayerNormMatchesPyTorchVarianceConvention() throws {
     let layer = BoltzLayerNorm(
       weight: array([2.0, 4.0]),
