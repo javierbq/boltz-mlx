@@ -60,11 +60,13 @@ final class MSAEndToEndTests: XCTestCase {
     }
 
     /// Skips rather than fails when the alignment is absent — the barnase/barstar a3m files are not
-    /// committed. Regenerate with `scripts/generate_msa.py`.
+    /// committed and nothing here rebuilds them; they came from a ColabFold search over the fixture's
+    /// own sequences. `examples/msa/seq1.a3m` IS committed, but every case here also needs an exported
+    /// model via `BOLTZ_MODEL`, so the default `swift test` reports success having folded nothing.
     private func alignment(_ relative: String) throws -> MSAAlignment {
         let url = repositoryRoot.appending(path: relative)
         guard FileManager.default.fileExists(atPath: url.path) else {
-            throw XCTSkip("missing \(relative); regenerate with scripts/generate_msa.py")
+            throw XCTSkip("missing \(relative); supply the a3m under .artifacts/")
         }
         return try MSAAlignment.a3m(try String(contentsOf: url, encoding: .utf8))
     }

@@ -83,13 +83,17 @@ final class MSAFeaturizerParityTests: XCTestCase {
     }
 
     /// Skips rather than fails when an alignment is absent: the barnase/barstar a3m files live in
-    /// `.artifacts/` beside the reference bundles they pair with, and neither is committed. Regenerate
-    /// both with `scripts/generate_msa.py` (see validation/msa_real_binder/report.md).
+    /// `.artifacts/` beside the reference bundles they pair with, and neither is committed. Nothing in
+    /// this repository rebuilds them — the a3m files came from a ColabFold search over the fixture's
+    /// own sequences, the bundles from `boltz-mlx export-features` on the same YAML.
+    ///
+    /// SO A GREEN RUN IS NOT EVIDENCE OF PARITY. With `.artifacts/` absent every case here skips, and
+    /// `swift test` still reports success. Check that these actually ran before trusting the claim.
     private func alignments(_ c: Case) throws -> [String: MSAAlignment] {
         try c.alignments.mapValues { relative in
             let url = repositoryRoot.appending(path: relative)
             guard FileManager.default.fileExists(atPath: url.path) else {
-                throw XCTSkip("missing \(relative); regenerate with scripts/generate_msa.py")
+                throw XCTSkip("missing \(relative); supply the a3m under .artifacts/")
             }
             return try MSAAlignment.a3m(try String(contentsOf: url, encoding: .utf8))
         }

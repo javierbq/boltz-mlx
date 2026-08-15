@@ -1,8 +1,10 @@
 // BoltzFeaturizer.swift — build a Boltz-2 feature bundle in Swift, no Python.
 //
-// SCOPE. Protein-only, canonical-20, one or more polymer chains, single-sequence (the designed-binder
-// case has no homologs by construction). Ligands, nucleic acids, modified residues, real MSAs and
-// real templates are out of scope and are REFUSED rather than silently approximated.
+// SCOPE. Protein-only, canonical-20, one or more polymer chains. A real per-chain MSA is supported —
+// see `featurize(_:alignments:)` and `MSAAlignment` — and a chain with no alignment gets upstream's
+// depth-1 dummy MSA, which is the designed-binder case (no homologs by construction). Mixed is the
+// design case, not an edge case. Ligands, nucleic acids, modified residues and real templates are
+// out of scope and are REFUSED rather than silently approximated.
 //
 // HOW THE ENCODINGS WERE ESTABLISHED. Every convention below was decoded from Python-generated
 // reference bundles rather than inferred from upstream source, then cross-checked against the
