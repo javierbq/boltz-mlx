@@ -46,7 +46,12 @@ public struct AtomDiffusion {
     stepNoises: [MLXArray]? = nil,
     rotations: [MLXArray]? = nil,
     translations: [MLXArray]? = nil,
-    clearCacheBetweenSteps: Bool = true
+    clearCacheBetweenSteps: Bool = true,
+    /// Called once per completed sampling step, after the step's `MLX.eval` has
+    /// forced materialisation -- so the report describes work that has actually
+    /// happened, not work that has merely been queued. Appended last and
+    /// defaulted so every existing call site is unaffected.
+    onStep: ((_ completed: Int, _ total: Int) -> Void)? = nil
   ) throws -> MLXArray {
     let stepCount = steps ?? process.numSamplingSteps ?? 5
     let schedule = diffusionSchedule(
@@ -121,6 +126,9 @@ public struct AtomDiffusion {
       if clearCacheBetweenSteps {
         Memory.clearCache()
       }
+      // After the eval AND the cache clear, so the interval a caller measures
+      // between reports covers the whole step rather than eliding its tail.
+      onStep?(index + 1, stepCount)
     }
     return coordinates
   }

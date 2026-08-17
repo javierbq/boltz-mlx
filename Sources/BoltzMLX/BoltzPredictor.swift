@@ -137,19 +137,39 @@ public actor BoltzPredictor {
   /// a design loop must never mistake "not scored" for "scored badly".
   public func predictScored(
     featurized: BoltzFeaturizer.Output,
-    options: BoltzPredictionOptions = BoltzPredictionOptions()
+    options: BoltzPredictionOptions = BoltzPredictionOptions(),
+    /// Called from inside the run as each trunk recycle and each diffusion step
+    /// completes. Runs on the actor's executor, synchronously in the sampling
+    /// loop -- so keep it cheap and non-blocking, and throttle on the caller's
+    /// side. `@Sendable` because it crosses into an actor.
+    ///
+    /// Nothing is reported between the last recycle and the first diffusion
+    /// step (conditioning), nor after the last step (confidence, structure
+    /// assembly); those are single passes with no loop to report from.
+    onProgress: (@Sendable (BoltzProgress) -> Void)? = nil
   ) async throws -> ScoredStructure {
     guard let confidence else { throw BoltzError.missingTensor("confidence_module") }
     let features = featurized.features
     try memoryPlanner.validate(metadata: featurized.metadata)
     memoryPlanner.apply()
     try Task.checkCancellation()
-    let trunkOutput = try trunk(features: features, recyclingSteps: options.recyclingSteps)
+    let trunkOutput = try trunk(
+      features: features, recyclingSteps: options.recyclingSteps,
+      onRecycle: onProgress.map { report in
+        { completed, total in
+          report(BoltzProgress(stage: .trunk, completed: completed, total: total))
+        }
+      })
     try Task.checkCancellation()
     let conditioning = try self.conditioning(trunk: trunkOutput, features: features)
     let coordinates = try diffusion.sample(
       trunk: trunkOutput, features: features, conditioning: conditioning,
-      steps: options.diffusionSteps, seed: options.seed)
+      steps: options.diffusionSteps, seed: options.seed,
+      onStep: onProgress.map { report in
+        { completed, total in
+          report(BoltzProgress(stage: .diffusion, completed: completed, total: total))
+        }
+      })
     try Task.checkCancellation()
     // PADDED coordinates, deliberately: token_to_rep_atom is a one-hot over the padded atom axis.
     let scored = try confidence(

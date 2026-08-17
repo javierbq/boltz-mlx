@@ -29,7 +29,11 @@ public struct BoltzTrunk {
   public func callAsFunction(
     features: [String: MLXArray],
     recyclingSteps: Int,
-    clearCacheBetweenRecycles: Bool = true
+    clearCacheBetweenRecycles: Bool = true,
+    /// Called once per completed recycling pass, after that pass's `MLX.eval`.
+    /// `total` is `recyclingSteps + 1`, because the loop runs `0...recyclingSteps`.
+    /// Appended last and defaulted so every existing call site is unaffected.
+    onRecycle: ((_ completed: Int, _ total: Int) -> Void)? = nil
   ) throws -> TrunkOutput {
     let sequenceInput = try inputEmbedder(features)
     let initialSequence = sequenceInitial(sequenceInput)
@@ -52,7 +56,7 @@ public struct BoltzTrunk {
     var pair = MLX.zeros(initialPair.shape, dtype: initialPair.dtype)
     let mask = try requireFeature("token_pad_mask", from: features).asType(.float32)
     let pairMask = mask.expandedDimensions(axis: 2) * mask.expandedDimensions(axis: 1)
-    for _ in 0...recyclingSteps {
+    for cycle in 0...recyclingSteps {
       sequence = initialSequence + sequenceRecycle(sequenceNorm(sequence))
       pair = initialPair + pairRecycle(pairNorm(pair))
       if let templateModule {
@@ -73,6 +77,8 @@ public struct BoltzTrunk {
       if clearCacheBetweenRecycles {
         Memory.clearCache()
       }
+      // After the eval AND the cache clear, matching AtomDiffusion.sample.
+      onRecycle?(cycle + 1, recyclingSteps + 1)
     }
     return TrunkOutput(
       sequence: sequence,

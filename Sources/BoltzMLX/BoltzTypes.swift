@@ -13,6 +13,43 @@ public struct BoltzPredictionOptions: Sendable, Equatable {
   }
 }
 
+/// A progress report emitted from inside a prediction.
+///
+/// Reported ONLY from loops whose iteration ends in an `MLX.eval`, because MLX is
+/// lazy: a callback fired where nothing has been materialised would race ahead of
+/// the real work and then stall. That is exactly two places -- the trunk's
+/// recycling loop and the diffusion sampler -- and deliberately NOT the 64-block
+/// Pairformer loop, which has no eval and would emit 64 reports in milliseconds
+/// before going quiet for the rest of the pass.
+///
+/// `completed` counts finished iterations, so the first report is 1, not 0, and
+/// the last equals `total`.
+public struct BoltzProgress: Sendable, Equatable {
+  public enum Stage: String, Sendable, Equatable {
+    /// Trunk recycling. `total` is `recyclingSteps + 1` -- the loop runs
+    /// `0...recyclingSteps`, so a request for 3 recycles is 4 passes.
+    case trunk
+    /// Diffusion sampling. `total` is the resolved step count.
+    case diffusion
+  }
+
+  public let stage: Stage
+  public let completed: Int
+  public let total: Int
+
+  public init(stage: Stage, completed: Int, total: Int) {
+    self.stage = stage
+    self.completed = completed
+    self.total = total
+  }
+
+  /// Completion within this stage, 0...1. Zero when `total` is not positive,
+  /// rather than a division by zero.
+  public var fraction: Double {
+    total > 0 ? Double(completed) / Double(total) : 0
+  }
+}
+
 /// Allocation limits applied before pairwise tensors are constructed.
 public struct BoltzInputLimits: Sendable, Equatable {
   public var maximumTokens: Int
